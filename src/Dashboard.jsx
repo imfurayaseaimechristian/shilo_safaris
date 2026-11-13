@@ -16,8 +16,25 @@ function authOptions(token, method = 'GET', body) {
   return { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }
 }
 
+async function readApiResponse(response) {
+  const text = await response.text()
+  let data
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      if (!response.ok) throw new Error(`Request failed (${response.status} ${response.statusText}).`)
+      throw new Error('The server returned an invalid response. Please try again.')
+    }
+  }
+  if (!response.ok) throw new Error(data?.error || `Request failed (${response.status} ${response.statusText}).`)
+  if (data === undefined) throw new Error('The server returned an empty response. Please try again.')
+  return data
+}
+
 export default function Dashboard() {
   const [token, setToken] = useState(() => sessionStorage.getItem('shilo-admin-token') || '')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [section, setSection] = useState('overview')
   const [pageKey, setPageKey] = useState('about')
@@ -36,9 +53,9 @@ export default function Dashboard() {
     let active = true
     const headers = { Authorization: `Bearer ${token}` }
     Promise.all([
-      fetch('/api/admin/content', { headers }).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data }),
-      fetch('/api/admin/analytics', { headers }).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data }),
-      fetch('/api/inquiries', { headers }).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data }),
+      fetch('/api/admin/content', { headers }).then(readApiResponse),
+      fetch('/api/admin/analytics', { headers }).then(readApiResponse),
+      fetch('/api/inquiries', { headers }).then(readApiResponse),
     ]).then(([nextContent, nextAnalytics, nextInquiries]) => {
       if (!active) return
       setContent(nextContent)
@@ -57,9 +74,8 @@ export default function Dashboard() {
     event.preventDefault()
     setError('')
     try {
-      const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Sign-in failed.')
+      const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) })
+      const data = await readApiResponse(response)
       sessionStorage.setItem('shilo-admin-token', data.token)
       setLoading(true)
       setToken(data.token)
@@ -94,8 +110,7 @@ export default function Dashboard() {
     const isNew = !selectedSlug
     try {
       const response = await fetch(isNew ? `/api/admin/content/${type}` : `/api/admin/content/${type}/${encodeURIComponent(selectedSlug)}`, authOptions(token, isNew ? 'POST' : 'PUT', body))
-      const data = response.status === 204 ? {} : await response.json()
-      if (!response.ok) throw new Error(data.error || 'Could not save this item.')
+      const data = response.status === 204 ? {} : await readApiResponse(response)
       setContent((current) => ({ ...current, [type]: isNew ? [...current[type], data.item] : current[type].map((item) => item.slug === selectedSlug ? data.item : item) }))
       if (isNew) setAnalytics((current) => ({ ...current, [type === 'services' ? 'serviceCount' : 'destinationCount']: current[type === 'services' ? 'serviceCount' : 'destinationCount'] + 1 }))
       setSelectedSlug(data.item.slug)
@@ -111,7 +126,7 @@ export default function Dashboard() {
     setError('')
     try {
       const response = await fetch(`/api/admin/content/${section}/${encodeURIComponent(item.slug)}`, authOptions(token, 'DELETE'))
-      if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Could not remove this item.') }
+      if (!response.ok) await readApiResponse(response)
       setContent((current) => ({ ...current, [section]: current[section].filter((entry) => entry.slug !== item.slug) }))
       setAnalytics((current) => ({ ...current, [section === 'services' ? 'serviceCount' : 'destinationCount']: current[section === 'services' ? 'serviceCount' : 'destinationCount'] - 1 }))
       setEditing(null)
@@ -128,15 +143,14 @@ export default function Dashboard() {
     setMessage('')
     try {
       const response = await fetch(`/api/admin/pages/${pageKey}`, authOptions(token, 'PUT', content.pages[pageKey]))
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Could not save page copy.')
+      const data = await readApiResponse(response)
       setContent((current) => ({ ...current, pages: { ...current.pages, [pageKey]: data.page } }))
       setMessage('Page copy saved to the website.')
     } catch (saveError) { setError(saveError.message) }
     finally { setBusy(false) }
   }
 
-  if (!token) return <main className="dashboard-login"><a className="dashboard-back" href="/">← Back to website</a><form className="dashboard-login-form" onSubmit={login}><img src="/shilo-emblem.png" alt="" /><span>SHILO SAFARIS &amp; TOURS</span><h1>Dashboard sign in</h1><p>Manage website content and enquiries.</p><label>Admin password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="dashboard-primary" type="submit">Sign in <ArrowUpRight size={16} /></button>{error && <p className="dashboard-error" role="alert">{error}</p>}</form></main>
+  if (!token) return <main className="dashboard-login"><a className="dashboard-back" href="/">← Back to website</a><form className="dashboard-login-form" onSubmit={login}><img src="/shilo-emblem.png" alt="" /><span>SHILO SAFARIS &amp; TOURS</span><h1>Dashboard sign in</h1><p>Manage website content and enquiries.</p><label>Username<input type="text" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="dashboard-primary" type="submit">Login</button>{error && <p className="dashboard-error" role="alert">{error}</p>}</form></main>
 
   return <main className="dashboard-app">
     <aside className="dashboard-sidebar"><a className="dashboard-brand" href="/" aria-label="Shilo Safaris website"><img src="/shilo-emblem.png" alt="" /><span><strong>SHILO</strong><small>CONTENT STUDIO</small></span></a><span className="dashboard-nav-label">WORKSPACE</span><nav aria-label="Dashboard sections">{Object.entries(labels).map(([key, label]) => <button key={key} className={section === key ? 'is-active' : ''} onClick={() => { setSection(key); setEditing(null); setError(''); setMessage('') }}>{key === 'overview' || key === 'analytics' ? <BarChart3 size={17} /> : key === 'services' ? <Compass size={17} /> : key === 'destinations' ? <MapPin size={17} /> : key === 'pages' ? <FileText size={17} /> : key === 'inquiries' ? <UsersRound size={17} /> : null}{label}</button>)}</nav><a className="dashboard-site-link" href="/" target="_blank" rel="noreferrer"><Globe2 size={16} /> View website <ArrowUpRight size={14} /></a></aside>
@@ -163,8 +177,7 @@ function InquiryList({ inquiries }) {
     setStatusError('')
     try {
       const response = await fetch(`/api/inquiries/${id}`, authOptions(sessionStorage.getItem('shilo-admin-token') || '', 'PATCH', { status }))
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Could not update enquiry status.')
+      const data = await readApiResponse(response)
       setStatuses((current) => ({ ...current, [id]: data.inquiry.status }))
     } catch (error) { setStatusError(error.message) }
   }

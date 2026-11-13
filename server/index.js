@@ -3,11 +3,14 @@ import express from 'express'
 import pg from 'pg'
 import jwt from 'jsonwebtoken'
 import { timingSafeEqual } from 'node:crypto'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { initializeContent, registerContentRoutes } from './content.js'
 
 const { Pool } = pg
 const app = express()
 const port = Number(process.env.PORT || 3001)
+const distDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist')
 const pool = process.env.DATABASE_URL ? new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSL === 'require' ? { rejectUnauthorized: false } : undefined,
@@ -36,14 +39,19 @@ const clean = (value, limit = 3000) => typeof value === 'string' ? value.trim().
 app.get('/api/health', (_request, response) => response.json({ ok: true, databaseConfigured: Boolean(pool) }))
 
 app.post('/api/admin/login', (request, response) => {
+  const configuredUsername = clean(process.env.ADMIN_USERNAME || 'shiloadmin', 120)
   const configuredPassword = process.env.ADMIN_PASSWORD
   const configuredSecret = process.env.JWT_SECRET
+  const submittedUsername = Buffer.from(clean(request.body?.username, 120))
   const submittedPassword = clean(request.body?.password, 200)
   if (!configuredPassword || !configuredSecret) return response.status(503).json({ error: 'Admin credentials are not configured on the server.' })
+  const expectedUsername = Buffer.from(configuredUsername)
+  const usernameMatches = submittedUsername.length === expectedUsername.length && timingSafeEqual(submittedUsername, expectedUsername)
   const submitted = Buffer.from(submittedPassword)
   const expected = Buffer.from(configuredPassword)
-  if (submitted.length !== expected.length || !timingSafeEqual(submitted, expected)) {
-    return response.status(401).json({ error: 'That password did not match.' })
+  const passwordMatches = submitted.length === expected.length && timingSafeEqual(submitted, expected)
+  if (!usernameMatches || !passwordMatches) {
+    return response.status(401).json({ error: 'That username or password did not match.' })
   }
   response.json({ token: jwt.sign({ role: 'admin' }, configuredSecret, { expiresIn: '8h' }) })
 })
@@ -96,6 +104,16 @@ app.patch('/api/inquiries/:id', requireAdmin, requireDatabase, async (request, r
     response.status(500).json({ error: 'Could not update enquiry.' })
   }
 })
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(distDirectory))
+  app.use((request, response, next) => {
+    if (request.path === '/api' || request.path.startsWith('/api/')) return next()
+    response.sendFile(path.join(distDirectory, 'index.html'), (error) => {
+      if (error) next(error)
+    })
+  })
+}
 
 async function start() {
   if (pool) {

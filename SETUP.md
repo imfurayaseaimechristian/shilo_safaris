@@ -9,7 +9,7 @@
 
 1. Copy `.env.example` to `.env`.
 2. Create a PostgreSQL database named `shilo_safaris` (or update `DATABASE_URL` to use an existing database).
-3. Set `DATABASE_URL`, `ADMIN_PASSWORD`, and `JWT_SECRET` in `.env`. Use a long, unique admin password and a random JWT secret. Do not commit `.env`.
+3. Set `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `JWT_SECRET` in `.env`. The default admin username is `shiloadmin`; use a long, unique password and a random JWT secret. Do not commit `.env`.
 4. Start the app with `npm run dev:all`.
 
 The API creates its enquiry, site-content, and visit tables on startup, and seeds the current services, destinations, About, and Contact copy once. The public site has built-in defaults, but saving enquiries or dashboard changes requires a valid database connection and server credentials.
